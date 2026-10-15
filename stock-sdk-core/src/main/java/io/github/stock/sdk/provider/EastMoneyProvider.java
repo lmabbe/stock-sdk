@@ -26,6 +26,10 @@ public class EastMoneyProvider implements DataProvider {
 
     private static final Logger log = LoggerFactory.getLogger(EastMoneyProvider.class);
     private static final Pattern JSONP_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+\\((.*)\\);?$");
+    private static final Map<String, String> EM_HEADERS = Map.of(
+            "Referer", "https://quote.eastmoney.com/",
+            "User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
 
     private final HttpClientHelper httpHelper;
 
@@ -57,7 +61,7 @@ public class EastMoneyProvider implements DataProvider {
         );
 
         try {
-            String json = httpHelper.get(url, null);
+            String json = httpHelper.get(url, EM_HEADERS);
             JsonNode root = JsonUtils.readTree(json);
             JsonNode dataNode = root.path("data");
             if (dataNode.isMissingNode() || dataNode.isNull()) {
@@ -114,7 +118,7 @@ public class EastMoneyProvider implements DataProvider {
             String encoded = URLEncoder.encode(keyword.trim(), StandardCharsets.UTF_8.name());
             String url = "https://searchapi.eastmoney.com/api/suggest/get?type=14&token=D43BF722C8E33BDC906FB84D85E326E8&input=" + encoded;
 
-            String json = httpHelper.get(url, null);
+            String json = httpHelper.get(url, EM_HEADERS);
             JsonNode root = JsonUtils.readTree(json);
             JsonNode dataArray = root.path("QuotationCodeTable").path("Data");
 
@@ -148,39 +152,69 @@ public class EastMoneyProvider implements DataProvider {
 
     @Override
     public List<Quote> getMarketBatch() {
-        String url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f4,f3,f5,f6,f7,f9,f23";
+        String url = "https://17.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f4,f3,f5,f6,f7,f9,f23";
+        Map<String, String> headers = Map.of(
+                "Referer", "https://quote.eastmoney.com/",
+                "User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        );
+
         try {
-            String json = httpHelper.get(url, null);
+            String json;
+            try {
+                json = httpHelper.get(url, headers);
+            } catch (Exception e) {
+                // 备用 push2 节点降级
+                String fallbackUrl = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f4,f3,f5,f6,f7,f9,f23";
+                json = httpHelper.get(fallbackUrl, headers);
+            }
+
             JsonNode root = JsonUtils.readTree(json);
-            JsonNode diffArray = root.path("data").path("diff");
+            JsonNode diffNode = root.path("data").path("diff");
 
             List<Quote> list = new ArrayList<>();
-            if (diffArray.isArray()) {
-                for (JsonNode item : diffArray) {
-                    Quote q = new Quote();
-                    String code = item.path("f12").asText();
-                    q.setCode(code);
-                    q.setName(item.path("f14").asText());
-                    SymbolNormalizer.NormalizedSymbol norm = SymbolNormalizer.normalize(code);
-                    q.setSymbol(norm.getUnified());
-                    q.setMarket(norm.getMarket().getCode());
-
-                    q.setPrice(parseBigDecimal(item.path("f2").asText()));
-                    q.setChange(parseBigDecimal(item.path("f4").asText()));
-                    q.setChangePercent(parseBigDecimal(item.path("f3").asText()));
-                    q.setVolume(parseLong(item.path("f5").asText()));
-                    q.setAmount(parseBigDecimal(item.path("f6").asText()));
-                    q.setAmplitude(parseBigDecimal(item.path("f7").asText()));
-                    q.setPe(parseBigDecimal(item.path("f9").asText()));
-                    q.setPb(parseBigDecimal(item.path("f23").asText()));
-                    list.add(q);
+            if (diffNode.isArray()) {
+                for (JsonNode item : diffNode) {
+                    Quote q = parseQuoteItem(item);
+                    if (q != null) {
+                        list.add(q);
+                    }
                 }
+            } else if (diffNode.isObject()) {
+                diffNode.elements().forEachRemaining(item -> {
+                    Quote q = parseQuoteItem(item);
+                    if (q != null) {
+                        list.add(q);
+                    }
+                });
             }
             return list;
         } catch (Exception e) {
             log.error("Failed to fetch market batch: {}", e.getMessage());
             throw new StockException("EASTMONEY_BATCH_ERROR", "Failed to fetch market batch", e);
         }
+    }
+
+    private Quote parseQuoteItem(JsonNode item) {
+        String code = item.path("f12").asText();
+        if (code == null || code.trim().isEmpty() || "-".equals(code.trim())) {
+            return null;
+        }
+        Quote q = new Quote();
+        q.setCode(code.trim());
+        q.setName(item.path("f14").asText());
+        SymbolNormalizer.NormalizedSymbol norm = SymbolNormalizer.normalize(code.trim());
+        q.setSymbol(norm.getUnified());
+        q.setMarket(norm.getMarket().getCode());
+
+        q.setPrice(parseBigDecimal(item.path("f2").asText()));
+        q.setChange(parseBigDecimal(item.path("f4").asText()));
+        q.setChangePercent(parseBigDecimal(item.path("f3").asText()));
+        q.setVolume(parseLong(item.path("f5").asText()));
+        q.setAmount(parseBigDecimal(item.path("f6").asText()));
+        q.setAmplitude(parseBigDecimal(item.path("f7").asText()));
+        q.setPe(parseBigDecimal(item.path("f9").asText()));
+        q.setPb(parseBigDecimal(item.path("f23").asText()));
+        return q;
     }
 
     @Override
@@ -190,7 +224,7 @@ public class EastMoneyProvider implements DataProvider {
         String url = String.format("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=%s&fields=f12,f14,f2,f3,f128,f140", fs);
 
         try {
-            String json = httpHelper.get(url, null);
+            String json = httpHelper.get(url, EM_HEADERS);
             JsonNode root = JsonUtils.readTree(json);
             JsonNode diffArray = root.path("data").path("diff");
 
@@ -220,10 +254,10 @@ public class EastMoneyProvider implements DataProvider {
             return Collections.emptyList();
         }
         String cleanCode = plateCode.trim();
-        String url = String.format("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=b:%s&fields=f12,f14,f2,f4,f3,f5,f6,f7,f9,f23", cleanCode);
+        String url = String.format("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=b:%s&fields=f12,f14,f2,f4,f3,f5,f6,f7,f9,f23", cleanCode);
 
         try {
-            String json = httpHelper.get(url, null);
+            String json = httpHelper.get(url, EM_HEADERS);
             JsonNode root = JsonUtils.readTree(json);
             JsonNode diffArray = root.path("data").path("diff");
 

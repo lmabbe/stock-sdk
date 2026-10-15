@@ -164,7 +164,30 @@ chips.getBins().forEach(bin -> {
 
 ---
 
-### 5. 链式选股器 (`Screener`)
+### 5. 批量与全市场行情 (`sdk.batch`)
+
+100% 对齐 Node 原版架构，内置**腾讯高并发分片（500 只/批次）+ 东方财富智能双源降级**：
+
+```java
+// 1. 获取全市场 A 股批量行情（5000+ 只股票，并发拉取，毫秒级返回）
+List<Quote> allMarket = sdk.batch.cn(); 
+// 也可直接调用别名方法:
+List<Quote> allMarketAlias = sdk.batch.getMarketBatch();
+
+// 2. 批量并发获取指定代码列表（支持几百或几千只股票，自动按 500 一组分片并发）
+List<String> myCodes = List.of("600519", "000001", "300750", "688981");
+List<Quote> customQuotes = sdk.batch.byCodes(myCodes);
+
+// 3. 自定义分片大小与并发数（batchSize=200, concurrency=5）
+List<Quote> customQuotes2 = sdk.batch.byCodes(myCodes, 200, 5);
+
+// 4. 获取全市场 A 股有效代码清单（约 5000+ 只，如 sh600519, sz000001 等）
+List<String> codeList = sdk.batch.codes();
+```
+
+---
+
+### 6. 链式选股器 (`Screener`)
 
 ```java
 import io.github.stock.sdk.screener.Screener;
@@ -191,7 +214,7 @@ List<Quote> picks = Screener.screen(allQuotes)
 
 ---
 
-### 6. 技术指标纯计算引擎 (`Indicators`)
+### 7. 技术指标纯计算引擎 (`Indicators`)
 
 可脱离网络独立使用：
 
@@ -220,7 +243,7 @@ BollResult boll = Indicators.calcBOLL(closes, 20, 2.0);
 
 ---
 
-### 7. 交易信号与量化回测 (`Signals` & `Backtester`)
+### 8. 交易信号与量化回测 (`Signals` & `Backtester`)
 
 ```java
 import io.github.stock.sdk.signals.Signals;
@@ -257,7 +280,7 @@ System.out.println("交易胜率: " + String.format("%.2f%%", report.getWinRate(
 
 ---
 
-### 8. 公募基金、板块与搜索 (`fund`, `plate`, `search`)
+### 9. 公募基金、板块与搜索 (`fund`, `plate`, `search`)
 
 ```java
 // 1. 基金实时估算净值

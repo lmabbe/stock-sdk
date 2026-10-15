@@ -180,6 +180,28 @@ future.thenAccept(quotes -> {
 });
 ```
 
+### 4.4 批量分片与全市场大盘行情 (`sdk.batch`)
+
+SDK 提供了 100% 对齐 Node 原版的高性能批量服务 `sdk.batch`：
+- **智能双源保障**：全市场行情默认优先通过**腾讯财经多线程并发分片**拉取（单次请求 500 只代码，多线程并发，毫秒级扫完全市场 5000+ 只股票）；上游异常时自动无缝降级至东方财富。
+- **超长自选股自动分片**：支持传入任意几十、几百或数千只自选股票列表，底层自动按分片大小并发拉取，彻底告别 URL 超长与手动分页的繁琐。
+
+```java
+// 1. 获取全市场 A 股批量实时行情（5000+ 股票，毫秒级返回）
+List<Quote> allMarket = sdk.batch.cn();
+// 也可调用别名方法:
+List<Quote> allMarketAlias = sdk.batch.getMarketBatch();
+
+// 2. 批量并发获取指定代码列表（如 1000 只自选股，自动 500 一组分片并发）
+List<Quote> customQuotes = sdk.batch.byCodes(myFavoriteCodes);
+
+// 3. 自定义分片大小与最大并发线程数 (batchSize=200, concurrency=5)
+List<Quote> fastQuotes = sdk.batch.byCodes(myFavoriteCodes, 200, 5);
+
+// 4. 获取全市场 A 股代码清单 (约 5000+ 个有效规范代码，如 sh600519, sz000001 等)
+List<String> codes = sdk.batch.codes();
+```
+
 ---
 
 ## 5. K 线行情与分时图 (Kline & Timeline)

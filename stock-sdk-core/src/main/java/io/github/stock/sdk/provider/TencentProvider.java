@@ -10,13 +10,18 @@ import io.github.stock.sdk.model.Quote;
 import io.github.stock.sdk.model.SearchResult;
 import io.github.stock.sdk.model.SimpleQuote;
 import io.github.stock.sdk.util.HttpClientHelper;
+import io.github.stock.sdk.util.JsonUtils;
 import io.github.stock.sdk.util.SymbolNormalizer;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -228,9 +233,77 @@ public class TencentProvider implements DataProvider {
         throw new UnsupportedOperationException("TencentProvider does not support search, delegating to EastMoneyProvider");
     }
 
+    public static final String A_SHARE_LIST_URL = "https://assets.linkdiary.cn/shares/zh_a_list.json";
+
     @Override
     public List<Quote> getMarketBatch() {
-        throw new UnsupportedOperationException("TencentProvider market batch delegated");
+        List<String> codes = getAShareCodeList();
+        if (codes == null || codes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return getQuotesInChunks(codes, 500, 5);
+    }
+
+    /**
+     * 从远程获取全市场 A 股代码列表（约 5000+ 股票代码，如 sh600519, sz000001, bj920000）
+     */
+    public List<String> getAShareCodeList() {
+        try {
+            String json = httpHelper.get(A_SHARE_LIST_URL, null);
+            JsonNode root = JsonUtils.readTree(json);
+            JsonNode listNode = root.path("list");
+            if (listNode.isArray()) {
+                List<String> list = new ArrayList<>();
+                for (JsonNode item : listNode) {
+                    list.add(item.asText());
+                }
+                return list;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fetch A-share code list from remote: {}", e.getMessage());
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * 分片并发批量获取股票实时行情（支持几百或几千只股票分块批量查询）
+     *
+     * @param codes        股票代码列表
+     * @param batchSize    每个分片包含的代码数（建议 200~500）
+     * @param concurrency  最大并发请求数（建议 3~7）
+     */
+    public List<Quote> getQuotesInChunks(List<String> codes, int batchSize, int concurrency) {
+        if (codes == null || codes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        int size = Math.max(1, Math.min(batchSize, 800));
+        int threads = Math.max(1, Math.min(concurrency, 10));
+
+        List<List<String>> chunks = new ArrayList<>();
+        for (int i = 0; i < codes.size(); i += size) {
+            chunks.add(codes.subList(i, Math.min(i + size, codes.size())));
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<CompletableFuture<List<Quote>>> futures = chunks.stream()
+                    .map(chunk -> CompletableFuture.supplyAsync(() -> getQuotes(chunk), executor))
+                    .collect(Collectors.toList());
+
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            List<Quote> allQuotes = new ArrayList<>();
+            for (CompletableFuture<List<Quote>> f : futures) {
+                try {
+                    allQuotes.addAll(f.get());
+                } catch (Exception e) {
+                    log.warn("Chunk fetch failed: {}", e.getMessage());
+                }
+            }
+            return allQuotes;
+        } finally {
+            executor.shutdown();
+        }
     }
 
     @Override

@@ -30,6 +30,7 @@ public class HttpClientHelper {
     public HttpClientHelper(SdkConfig config) {
         this.config = config != null ? config : SdkConfig.defaultConfig();
         HttpClient.Builder clientBuilder = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(this.config.getTimeout())
                 .followRedirects(HttpClient.Redirect.NORMAL);
 

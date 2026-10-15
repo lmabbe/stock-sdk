@@ -74,7 +74,7 @@ public class StockSDK {
         this.board = this.plate;
         this.search = new SearchService(this.eastMoneyProvider);
         this.chips = new ChipsService(this.eastMoneyProvider, this.tencentProvider);
-        this.batch = new BatchService(this.eastMoneyProvider);
+        this.batch = new BatchService(this.eastMoneyProvider, (TencentProvider) this.tencentProvider);
         this.moneyflow = new MoneyFlowService(this.eastMoneyProvider);
         this.options = new OptionsService(this.eastMoneyProvider);
         this.futures = new FuturesService(this.eastMoneyProvider);
